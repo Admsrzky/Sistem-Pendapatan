@@ -12,6 +12,16 @@ if (isset($_GET['backup_app'])) {
 } else if (isset($_GET['transaksi'])) {
     $transaksi = true;
     $views = 'views/transaksi.php';
+} else if (isset($_GET['transaksi_form'])) {
+    $transaksi = true; // Ini agar menu "Transaksi Penjualan" tetap aktif/terbuka
+    $views = 'views/transaksi_form.php';
+    // ========================================================
+    // ++ TAMBAHKAN BLOK BARU DI SINI ++
+    // ========================================================
+} else if (isset($_GET['transaksi_detail'])) {
+    $transaksi = true; // Agar menu "Transaksi Penjualan" tetap aktif
+    $views = 'views/transaksi_detail.php'; // Muat file detail yang baru dibuat
+    // ========================================================
 } else if (isset($_GET['laporan'])) { // THIS IS THE NEW BLOCK TO ADD
     $laporan = true; // This sets the variable to make the 'Laporan' sidebar link active
     $views = 'views/laporan.php'; // This tells the system to load your 'laporan.php' file

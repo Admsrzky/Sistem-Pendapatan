@@ -1,30 +1,27 @@
 <?php
-error_reporting(E_ALL); // Tampilkan semua error PHP
-ini_set('display_errors', 1); // Pastikan error ditampilkan di browser
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 
 session_start();
 
-// Pastikan path ke file koneksi Anda benar!
+// Include file konfigurasi dan fungsi
 include('../config/conn.php');
-include('../config/function.php'); // Include your function.php for encrypt/decrypt
+include('../config/function.php');
 
-// Pastikan $con (variabel koneksi) tersedia setelah include conn.php
+// Pastikan koneksi database berhasil
 if (!isset($con) || !$con) {
-    if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest') {
-        header('Content-Type: application/json');
-        echo json_encode(['error' => 'Koneksi database gagal diinisialisasi.']);
-    } else {
-        $_SESSION['error'] = 'Koneksi database gagal diinisialisasi.';
-        header('Location: ../index.php?page=transaksi'); // Sesuaikan redirect
-    }
+    $_SESSION['error'] = 'Koneksi database gagal diinisialisasi.';
+    header('Location: ../index.php?transaksi');
     exit();
 }
 
-// Definisikan URL redirect yang konsisten
-$redirect_url = '../index.php?transaksi'; // Mengarah ke index.php dengan parameter jenis_jasa
+// URL redirect untuk kembali ke halaman daftar transaksi
+$redirect_url = '../index.php?transaksi';
+
 
 // =========================================================================
-// Perubahan di sini: Mengambil idpengguna dari pengguna dengan level 'Admin'
+// Dipertahankan dari kode Anda: Mengambil idpengguna dari pengguna 'Admin'
+// untuk dicatat di setiap transaksi.
 // =========================================================================
 $pengguna_id_for_transaction = null;
 $query_admin_id = mysqli_query($con, "SELECT idpengguna FROM pengguna WHERE pengguna_level = 'Admin' LIMIT 1");
@@ -33,21 +30,22 @@ if ($query_admin_id && mysqli_num_rows($query_admin_id) > 0) {
     $admin_data = mysqli_fetch_assoc($query_admin_id);
     $pengguna_id_for_transaction = $admin_data['idpengguna'];
 } else {
-    // Jika tidak ada admin ditemukan, berikan pesan error
-    $_SESSION['error'] = 'Pengguna dengan level Admin tidak ditemukan untuk mencatat transaksi. Harap tambahkan setidaknya satu Admin.';
+    // Jika tidak ada admin, proses dihentikan.
+    $_SESSION['error'] = 'Pengguna dengan level Admin tidak ditemukan. Harap tambahkan setidaknya satu Admin.';
     header('Location: ' . $redirect_url);
     exit();
 }
 // =========================================================================
 
 
-// Handle GET requests for delete operations
+// Handle HAPUS data (Logika ini tetap sama dan valid)
 if (isset($_GET['act']) && isset($_GET['id'])) {
     $action = decrypt($_GET['act']);
     $id = decrypt($_GET['id']);
 
     if ($action == 'delete') {
         $idtransaksi = mysqli_real_escape_string($con, $id);
+        // Dengan ON DELETE CASCADE, item-item di `transaksi_items` akan otomatis terhapus.
         $delete_query = mysqli_query($con, "DELETE FROM transaksi WHERE idtransaksi = '$idtransaksi'");
 
         if ($delete_query) {
@@ -60,114 +58,129 @@ if (isset($_GET['act']) && isset($_GET['id'])) {
     }
 }
 
-// Handle POST requests for add, update, and data retrieval for edit modal
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    // Logic for fetching data for the edit modal (AJAX request from submit(x) where x is id)
-    if (isset($_POST['id']) && !empty($_POST['id']) && !isset($_POST['tambah']) && !isset($_POST['ubah'])) {
-        $idtransaksi_ajax = mysqli_real_escape_string($con, $_POST['id']);
-        $query_ajax = mysqli_query($con, "SELECT * FROM transaksi x JOIN jasa x1 ON x.jasa_id=x1.idjasa WHERE x.idtransaksi = '$idtransaksi_ajax'");
+// Handle SIMPAN dan UBAH data dari form multi-item
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['act'])) {
+    $act = decrypt($_POST['act']);
 
-        if (!$query_ajax) {
-            header('Content-Type: application/json');
-            echo json_encode(['error' => 'Gagal mengeksekusi query database untuk pengambilan data: ' . mysqli_error($con)]);
-            exit();
+    // =========================================================================
+    // ## LOGIKA BARU UNTUK SIMPAN TRANSAKSI (SAVE) ##
+    // =========================================================================
+    if ($act == 'save_transaksi') {
+        $transaksi_no = mysqli_real_escape_string($con, $_POST['transaksi_no']);
+        $transaksi_tgl = mysqli_real_escape_string($con, $_POST['transaksi_tgl']);
+        $transaksi_nama = mysqli_real_escape_string($con, $_POST['transaksi_nama']);
+
+        // Memulai Database Transaction untuk memastikan semua query berhasil
+        mysqli_begin_transaction($con);
+
+        try {
+            // 1. Simpan data ke tabel master `transaksi` dengan total harga sementara 0
+            $sql_transaksi = "INSERT INTO transaksi (transaksi_no, transaksi_tgl, transaksi_nama, pengguna_id, transaksi_total_harga) VALUES ('$transaksi_no', '$transaksi_tgl', '$transaksi_nama', '$pengguna_id_for_transaction', 0)";
+            $query_transaksi = mysqli_query($con, $sql_transaksi);
+
+            if (!$query_transaksi) {
+                throw new Exception("Gagal menyimpan data transaksi utama.");
+            }
+
+            $id_transaksi_baru = mysqli_insert_id($con);
+            $grand_total = 0;
+
+            // 2. Cek dan proses item-item dari keranjang
+            if (!isset($_POST['items']) || empty($_POST['items']['jasa_id'])) {
+                throw new Exception("Keranjang tidak boleh kosong.");
+            }
+
+            $items = $_POST['items'];
+            for ($i = 0; $i < count($items['jasa_id']); $i++) {
+                $jasa_id = mysqli_real_escape_string($con, $items['jasa_id'][$i]);
+                $harga = mysqli_real_escape_string($con, $items['harga'][$i]);
+                $jumlah = mysqli_real_escape_string($con, $items['jumlah'][$i]);
+                $subtotal = (float)$harga * (int)$jumlah;
+                $grand_total += $subtotal;
+
+                $sql_items = "INSERT INTO transaksi_items (transaksi_id, jasa_id, harga, jumlah, subtotal) VALUES ('$id_transaksi_baru', '$jasa_id', '$harga', '$jumlah', '$subtotal')";
+                $query_items = mysqli_query($con, $sql_items);
+
+                if (!$query_items) {
+                    throw new Exception("Gagal menyimpan salah satu item jasa.");
+                }
+            }
+
+            // 3. Update `transaksi_total_harga` di tabel master dengan grand total final
+            $sql_update_total = "UPDATE transaksi SET transaksi_total_harga = '$grand_total' WHERE idtransaksi = '$id_transaksi_baru'";
+            $query_update_total = mysqli_query($con, $sql_update_total);
+
+            if (!$query_update_total) {
+                throw new Exception("Gagal memperbarui total harga transaksi.");
+            }
+
+            // Jika semua query berhasil, konfirmasi perubahan
+            mysqli_commit($con);
+            $_SESSION['success'] = "Transaksi berhasil disimpan.";
+        } catch (Exception $e) {
+            // Jika ada satu saja error, batalkan semua perubahan
+            mysqli_rollback($con);
+            $_SESSION['error'] = "Terjadi kesalahan: " . $e->getMessage();
         }
 
-        if (mysqli_num_rows($query_ajax) > 0) {
-            $data_ajax = mysqli_fetch_assoc($query_ajax);
-            header('Content-Type: application/json');
-            echo json_encode($data_ajax);
-        } else {
-            header('Content-Type: application/json');
-            echo json_encode(['error' => 'Data transaksi tidak ditemukan untuk ID ini.']);
-        }
-        exit(); // Exit after handling AJAX data retrieval
+        header('Location: ' . $redirect_url);
+        exit();
     }
 
-
-    // Logic for Add or Update (form submission from the modal)
-    if (isset($_POST['tambah']) || isset($_POST['ubah'])) {
-        $transaksi_no = mysqli_real_escape_string($con, $_POST['transaksi_no']);
+    // =========================================================================
+    // ## LOGIKA BARU UNTUK UBAH TRANSAKSI (UPDATE) ##
+    // =========================================================================
+    if ($act == 'update_transaksi') {
+        $id_transaksi = decrypt($_POST['idtransaksi']);
+        $transaksi_tgl = mysqli_real_escape_string($con, $_POST['transaksi_tgl']);
         $transaksi_nama = mysqli_real_escape_string($con, $_POST['transaksi_nama']);
-        $jasa_id = mysqli_real_escape_string($con, $_POST['jenis_jasa']);
 
-        $transaksi_jumlah = str_replace(['Rp. ', '.'], '', $_POST['transaksi_jumlah']);
-        $transaksi_jumlah = mysqli_real_escape_string($con, $transaksi_jumlah);
+        mysqli_begin_transaction($con);
+        try {
+            // 1. Update data master (nama pelanggan & tanggal)
+            $sql_update_master = "UPDATE transaksi SET transaksi_tgl='$transaksi_tgl', transaksi_nama='$transaksi_nama' WHERE idtransaksi='$id_transaksi'";
+            mysqli_query($con, $sql_update_master);
 
-        // Validasi input dasar
-        if (empty($transaksi_no) || empty($transaksi_nama) || empty($jasa_id) || empty($transaksi_jumlah) || !is_numeric(str_replace(['Rp. ', '.'], '', $_POST['transaksi_jumlah']))) {
-            $_SESSION['error'] = "Semua field wajib diisi dan Jumlah harus angka.";
-            header('Location: ' . $redirect_url);
-            exit();
-        }
+            // 2. Hapus semua item lama yang terkait dengan transaksi ini
+            mysqli_query($con, "DELETE FROM transaksi_items WHERE transaksi_id='$id_transaksi'");
 
-        // Ambil harga jasa dari database
-        $query_jasa_harga = mysqli_query($con, "SELECT jasa_harga FROM jasa WHERE idjasa = '$jasa_id'");
-        if (!$query_jasa_harga || mysqli_num_rows($query_jasa_harga) == 0) {
-            $_SESSION['error'] = "Jenis jasa tidak ditemukan.";
-            header('Location: ' . $redirect_url);
-            exit();
-        }
-        $data_jasa = mysqli_fetch_assoc($query_jasa_harga);
-        $harga_satuan = $data_jasa['jasa_harga'];
-
-        $transaksi_jumlah_numeric = (int)str_replace(['Rp. ', '.'], '', $_POST['transaksi_jumlah']);
-        $transaksi_total_harga_numeric = $harga_satuan * $transaksi_jumlah_numeric;
-
-        $transaksi_total_harga = mysqli_real_escape_string($con, $transaksi_total_harga_numeric);
-
-        $transaksi_tgl = date('Y-m-d');
-
-
-        if (isset($_POST['tambah'])) {
-            // Add (Insert) operation
-            // Menggunakan $pengguna_id_for_transaction yang diambil dari level 'Admin'
-            $insert_query = "INSERT INTO transaksi (transaksi_no, transaksi_tgl, transaksi_nama, jasa_id, transaksi_jumlah, transaksi_total_harga, pengguna_id) 
-                             VALUES ('$transaksi_no', '$transaksi_tgl', '$transaksi_nama', '$jasa_id', '$transaksi_jumlah', '$transaksi_total_harga', '$pengguna_id_for_transaction')";
-
-            if (mysqli_query($con, $insert_query)) {
-                $_SESSION['success'] = 'Data transaksi berhasil ditambahkan.';
-            } else {
-                $_SESSION['error'] = 'Gagal menambahkan data transaksi: ' . mysqli_error($con) . ' Query: ' . $insert_query;
-            }
-        } elseif (isset($_POST['ubah'])) {
-            // Update operation
-            $idtransaksi = mysqli_real_escape_string($con, $_POST['idtransaksi']);
-
-            if (empty($idtransaksi)) {
-                $_SESSION['error'] = "ID Transaksi tidak ditemukan untuk pembaruan.";
-                header('Location: ' . $redirect_url);
-                exit();
+            // 3. Simpan kembali semua item baru dari form (logikanya sama seperti 'save')
+            $grand_total = 0;
+            if (!isset($_POST['items']) || empty($_POST['items']['jasa_id'])) {
+                throw new Exception("Keranjang tidak boleh kosong saat update.");
             }
 
-            $update_query = "UPDATE transaksi SET 
-                               transaksi_no = '$transaksi_no', 
-                               transaksi_nama = '$transaksi_nama', 
-                               jasa_id = '$jasa_id', 
-                               transaksi_jumlah = '$transaksi_jumlah', 
-                               transaksi_total_harga = '$transaksi_total_harga',
-                               pengguna_id = '$pengguna_id_for_transaction' -- Update pengguna_id dengan ID Admin
-                             WHERE idtransaksi = '$idtransaksi'";
+            $items = $_POST['items'];
+            for ($i = 0; $i < count($items['jasa_id']); $i++) {
+                $jasa_id = mysqli_real_escape_string($con, $items['jasa_id'][$i]);
+                $harga = mysqli_real_escape_string($con, $items['harga'][$i]);
+                $jumlah = mysqli_real_escape_string($con, $items['jumlah'][$i]);
+                $subtotal = (float)$harga * (int)$jumlah;
+                $grand_total += $subtotal;
 
-            if (mysqli_query($con, $update_query)) {
-                $_SESSION['success'] = 'Data transaksi berhasil diubah.';
-            } else {
-                $_SESSION['error'] = 'Gagal mengubah data transaksi: ' . mysqli_error($con) . ' Query: ' . $update_query;
+                $sql_items = "INSERT INTO transaksi_items (transaksi_id, jasa_id, harga, jumlah, subtotal) VALUES ('$id_transaksi', '$jasa_id', '$harga', '$jumlah', '$subtotal')";
+                if (!mysqli_query($con, $sql_items)) {
+                    throw new Exception("Gagal menyimpan item jasa baru.");
+                }
             }
+
+            // 4. Update grand total di tabel master
+            mysqli_query($con, "UPDATE transaksi SET transaksi_total_harga = '$grand_total' WHERE idtransaksi = '$id_transaksi'");
+
+            mysqli_commit($con);
+            $_SESSION['success'] = "Transaksi berhasil diperbarui.";
+        } catch (Exception $e) {
+            mysqli_rollback($con);
+            $_SESSION['error'] = "Terjadi kesalahan saat update: " . $e->getMessage();
         }
+
         header('Location: ' . $redirect_url);
         exit();
     }
 }
 
-// Fallback for invalid requests
-if (!isset($_SERVER['HTTP_X_REQUESTED_WITH']) || strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) != 'xmlhttprequest') {
-    $_SESSION['error'] = 'Permintaan tidak valid.';
-    header('Location: ' . $redirect_url);
-    exit();
-} else {
-    header('Content-Type: application/json');
-    echo json_encode(['error' => 'Permintaan AJAX tidak valid.']);
-    exit();
-}
+// Fallback jika ada permintaan yang tidak sesuai format
+$_SESSION['error'] = 'Permintaan tidak valid.';
+header('Location: ' . $redirect_url);
+exit();

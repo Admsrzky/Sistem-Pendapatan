@@ -1,146 +1,137 @@
 <?php
-// PASTIKAN session_start() sudah dipanggil di bagian paling atas file index.php atau file yang memuat function.php ini.
 
-// Fungsi ini seharusnya tidak perlu 'include conn.php' jika $base_url sudah global atau didefinisikan di luar.
-// Jika $base_url belum global, Anda harus mendefinisikannya sebelum memanggil session_timeout().
-// Misalnya, di index.php:
-// $base_url = ((isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] == "on") ? "https" : "http") . "://" . $_SERVER['HTTP_HOST'] . str_replace(basename($_SERVER['SCRIPT_NAME']),"",$_SERVER['SCRIPT_NAME']);
-// Kemudian: session_timeout($base_url); atau ubah fungsi ini untuk memanggil base_url()
+/**
+ * File fungsi utama untuk aplikasi.
+ * Pastikan session_start() sudah dipanggil di file index.php sebelum file ini di-include.
+ */
+
+// =========================================================================
+// PENTING: Kunci Enkripsi
+// Tambahkan dua baris ini di file config/conn.php Anda.
+// JANGAN UBAH KUNCI INI SETELAH DATA PRODUKSI MASUK, atau data lama tidak akan bisa di-dekripsi.
+/*
+    define('ENCRYPTION_KEY', 'ganti-dengan-kunci-rahasia-anda-yang-panjang-dan-acak-32-karakter');
+    define('ENCRYPTION_IV', substr(hash('sha256', 'ganti-dengan-iv-rahasia-yang-berbeda-dari-kunci'), 0, 16));
+*/
+// =========================================================================
+
+/**
+ * Membuat base URL secara dinamis.
+ * @return string URL dasar aplikasi.
+ */
+function base_url()
+{
+    // Untuk keandalan, hardcode URL mungkin lebih baik untuk struktur folder Anda
+    // return "http://localhost:8081/Sistem%20Tugas%20Akhir/Sistem%20Informasi%20Pendapatan%20Fotocopy/";
+
+    // Versi dinamis
+    $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' || $_SERVER['SERVER_PORT'] == 443) ? "https://" : "http://";
+    $host = $_SERVER['HTTP_HOST'];
+    $path = dirname($_SERVER['SCRIPT_NAME']);
+    $path = ($path == DIRECTORY_SEPARATOR) ? '' : $path;
+    return $protocol . $host . $path . '/';
+}
+
+/**
+ * Mengatur timeout sesi pengguna.
+ */
 function session_timeout()
 {
-    // Inisialisasi base_url jika belum ada (alternatif, lebih baik definisikan global di index.php)
-    // global $base_url; // uncomment jika $base_url adalah global variable
-    if (!function_exists('base_url')) { // Fallback jika base_url() belum didefinisikan
-        function base_url()
-        {
-            $url = ((isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] == "on") ? "https" : "http");
-            $url .= "://" . $_SERVER['HTTP_HOST'];
-            $url .= str_replace(basename($_SERVER['SCRIPT_NAME']), "", $_SERVER['SCRIPT_NAME']);
-            return $url;
-        }
-    }
-
-    //lama waktu 30 menit = 1800
+    // lama waktu 30 menit = 1800 detik
     if (isset($_SESSION['LAST_ACTIVITY']) && (time() - $_SESSION['LAST_ACTIVITY'] > 1800)) {
         session_unset();
         session_destroy();
-        // Pastikan redirect menggunakan base_url() yang benar
         header("Location: " . base_url() . "login.php");
-        exit(); // Penting: hentikan eksekusi setelah redirect
+        exit();
     }
     $_SESSION['LAST_ACTIVITY'] = time();
 }
 
+/**
+ * Menghapus format mata uang dari string.
+ * @param string $str String yang akan dibersihkan.
+ * @return int Angka integer.
+ */
 function delMask($str)
 {
-    // Lebih robust untuk menghapus semua karakter non-digit kecuali tanda minus di awal
     return (int) preg_replace('/[^0-9-]/', '', $str);
 }
 
-function hakAkses(array $a)
+/**
+ * Memeriksa hak akses pengguna berdasarkan level di session.
+ * @param array $allowed_roles Array berisi level yang diizinkan.
+ */
+function hakAkses(array $allowed_roles)
 {
-    // Pastikan session 'level' sudah ada sebelum diakses
     if (!isset($_SESSION['level'])) {
-        // Jika level tidak ada, anggap tidak punya akses dan redirect ke login atau halaman default
-        echo '<script>window.location = "' . base_url() . 'login.php";</script>';
+        header("Location: " . base_url() . "login.php");
         exit();
     }
 
-    $akses = $_SESSION['level'];
-    if (!in_array($akses, $a)) {
-        echo '<script>window.location = "?#";</script>'; // Atau redirect ke halaman unauthorized
-        exit(); // Penting: hentikan eksekusi setelah redirect
+    if (!in_array($_SESSION['level'], $allowed_roles)) {
+        // Redirect ke halaman utama jika akses ditolak
+        header("Location: " . base_url());
+        exit();
     }
 }
 
-// =========================================================================
-// Perbaikan Fungsi noTransaksi()
-// PENTING: Fungsi ini memerlukan variabel koneksi $con yang sudah terinisialisasi
-// di scope global (misalnya dari include 'config/conn.php' di index.php).
-// =========================================================================
-function noTransaksi()
+/**
+ * Membuat nomor transaksi baru secara otomatis.
+ * @param mysqli $con Objek koneksi database.
+ * @return string Nomor transaksi baru.
+ */
+function noTransaksi($con)
 {
-    global $con; // Gunakan variabel koneksi global
-
-    // Pastikan koneksi $con sudah ada dan valid
     if (!$con) {
-        // Handle error: koneksi database tidak tersedia
-        // Dalam lingkungan produksi, lebih baik log error daripada menampilkan langsung
-        error_log("noTransaksi() ERROR: Database connection (global \$con) is not available.");
-        return "ERROR_TRX_GEN"; // Atau nilai default yang menunjukkan kegagalan
+        error_log("noTransaksi() ERROR: Koneksi database tidak tersedia.");
+        return "TRX_ERR_DB";
     }
 
-    // Ambil nomor transaksi terakhir dari database
-    // Gunakan CAST dan SUBSTRING untuk pengurutan numerik yang akurat
-    $query = mysqli_query($con, "SELECT transaksi_no FROM transaksi ORDER BY CAST(SUBSTRING(transaksi_no, 4) AS UNSIGNED) DESC LIMIT 1");
+    $query_str = "SELECT transaksi_no FROM transaksi ORDER BY CAST(SUBSTRING(transaksi_no, 4) AS UNSIGNED) DESC LIMIT 1";
+    $query = mysqli_query($con, $query_str);
 
     if (!$query) {
-        error_log("noTransaksi() ERROR: Query failed: " . mysqli_error($con));
-        return "ERROR_TRX_GEN";
+        error_log("noTransaksi() ERROR: Query gagal: " . mysqli_error($con));
+        return "TRX_ERR_Q";
     }
 
-    $data = mysqli_fetch_assoc($query); // Gunakan mysqli_fetch_assoc lebih modern
-
+    $data = mysqli_fetch_assoc($query);
     $last_no = $data ? $data['transaksi_no'] : null;
 
-    if ($last_no) {
-        // Ambil bagian angka dari nomor transaksi terakhir (setelah 'TRX')
-        // Pastikan untuk menangani kasus di mana string mungkin lebih pendek dari yang diharapkan
-        $numeric_part = substr($last_no, 3);
-        $last_number = (int) $numeric_part; // Konversi ke integer
-        $next_number = $last_number + 1;
-    } else {
-        // Jika belum ada transaksi, mulai dari 1
-        $next_number = 1;
-    }
+    $next_number = $last_no ? ((int) substr($last_no, 3)) + 1 : 1;
 
-    // Format angka menjadi 5 digit dengan leading zeros
-    // Contoh: 1 menjadi 00001, 12 menjadi 00012
-    $formatted_number = sprintf('%05d', $next_number);
-
-    // Gabungkan dengan prefix 'TRX'
-    return 'TRX' . $formatted_number;
+    return 'TRX' . sprintf('%05d', $next_number);
 }
 
-// =========================================================================
-// Fungsi list_* - perbaiki agar tidak meng-include conn.php berulang-ulang
-// =========================================================================
-
-function list_jasa()
+/**
+ * Membuat daftar <option> untuk semua jasa.
+ * @param mysqli $con Objek koneksi database.
+ * @return string String HTML berisi tag <option>.
+ */
+function list_jasa($con)
 {
-    global $con; // Gunakan variabel koneksi global
-    if (!$con) {
-        error_log("list_jasa() ERROR: Database connection is not available.");
-        return "";
-    }
-
+    if (!$con) return "";
     $query = mysqli_query($con, "SELECT * FROM jasa ORDER BY jasa_nama ASC");
-    if (!$query) {
-        error_log("list_jasa() ERROR: Query failed: " . mysqli_error($con));
-        return "";
-    }
+    if (!$query) return "";
 
     $opt = "";
     while ($row = mysqli_fetch_array($query)) {
-        $opt .= "<option value=\"" . htmlspecialchars($row['idjasa']) . "\">" . htmlspecialchars($row['jasa_nama']) . " - Rp. " . number_format($row['jasa_harga'], 0, '', '.') . "</option>";
+        $harga_format = number_format($row['jasa_harga'], 0, ',', '.');
+        // PERHATIKAN PENAMBAHAN data-harga="..."
+        $opt .= "<option value=\"" . htmlspecialchars($row['idjasa']) . "\" data-harga=\"" . htmlspecialchars($row['jasa_harga']) . "\">"
+            . htmlspecialchars($row['jasa_nama']) . " - Rp " . $harga_format
+            . "</option>";
     }
     return $opt;
 }
 
-function list_guru()
+// ---- Blok fungsi list_* lainnya yang sudah diperbaiki ----
+
+function list_guru($con)
 {
-    global $con; // Gunakan variabel koneksi global
-    if (!$con) {
-        error_log("list_guru() ERROR: Database connection is not available.");
-        return "";
-    }
-
+    if (!$con) return "";
     $query = mysqli_query($con, "SELECT * FROM guru ORDER BY guru_nama ASC");
-    if (!$query) {
-        error_log("list_guru() ERROR: Query failed: " . mysqli_error($con));
-        return "";
-    }
-
+    if (!$query) return "";
     $opt = "";
     while ($row = mysqli_fetch_array($query)) {
         $opt .= "<option value=\"" . htmlspecialchars($row['idguru']) . "\">" . htmlspecialchars($row['guru_nip']) . " - " . htmlspecialchars($row['guru_nama']) . "</option>";
@@ -148,20 +139,11 @@ function list_guru()
     return $opt;
 }
 
-function list_tapel()
+function list_tapel($con)
 {
-    global $con; // Gunakan variabel koneksi global
-    if (!$con) {
-        error_log("list_tapel() ERROR: Database connection is not available.");
-        return "";
-    }
-
+    if (!$con) return "";
     $query = mysqli_query($con, "SELECT * FROM tahun_pelajaran ORDER BY idtahun_pelajaran DESC");
-    if (!$query) {
-        error_log("list_tapel() ERROR: Query failed: " . mysqli_error($con));
-        return "";
-    }
-
+    if (!$query) return "";
     $opt = "";
     while ($row = mysqli_fetch_array($query)) {
         $opt .= "<option value=\"" . htmlspecialchars($row['idtahun_pelajaran']) . "\">" . htmlspecialchars($row['nama_tapel']) . "/" . htmlspecialchars($row['semester_tapel']) . "</option>";
@@ -169,20 +151,11 @@ function list_tapel()
     return $opt;
 }
 
-function list_mapel()
+function list_mapel($con)
 {
-    global $con; // Gunakan variabel koneksi global
-    if (!$con) {
-        error_log("list_mapel() ERROR: Database connection is not available.");
-        return "";
-    }
-
+    if (!$con) return "";
     $mapel = mysqli_query($con, "SELECT * FROM mata_pelajaran x JOIN kelas x1 ON x.kelas_id=x1.idkelas JOIN guru x2 ON x.guru_id=x2.idguru ORDER BY mapel_nama ASC");
-    if (!$mapel) {
-        error_log("list_mapel() ERROR: Query failed: " . mysqli_error($con));
-        return "";
-    }
-
+    if (!$mapel) return "";
     $opt = "";
     while ($row2 = mysqli_fetch_array($mapel)) {
         $opt .= "<option value=\"" . htmlspecialchars($row2['idmata_pelajaran']) . "\">" . htmlspecialchars($row2['mapel_kode']) . " - " . htmlspecialchars($row2['mapel_nama']) . " - " . htmlspecialchars($row2['kelas_kode']) . "</option>";
@@ -190,37 +163,15 @@ function list_mapel()
     return $opt;
 }
 
-function list_mapel_by_guru()
+function list_mapel_by_guru($con)
 {
-    global $con; // Gunakan variabel koneksi global
-    if (!$con) {
-        error_log("list_mapel_by_guru() ERROR: Database connection is not available.");
-        return "";
-    }
-    if (!isset($_SESSION['username'])) {
-        return "";
-    } // Pastikan username di sesi ada
-
+    if (!$con || !isset($_SESSION['username'])) return "";
     $username = mysqli_real_escape_string($con, $_SESSION['username']);
     $guru_query = mysqli_query($con, "SELECT idguru FROM guru WHERE guru_nip='" . $username . "'");
-
-    if (!$guru_query) {
-        error_log("list_mapel_by_guru() ERROR: Guru query failed: " . mysqli_error($con));
-        return "";
-    }
-    if (mysqli_num_rows($guru_query) == 0) {
-        return "";
-    } // Tidak ada guru dengan NIP ini
-
+    if (!$guru_query || mysqli_num_rows($guru_query) == 0) return "";
     $guru = mysqli_fetch_array($guru_query);
-
     $mapel_query = mysqli_query($con, "SELECT * FROM mata_pelajaran x JOIN kelas x1 ON x.kelas_id=x1.idkelas JOIN guru x2 ON x.guru_id=x2.idguru WHERE x2.idguru='" . $guru['idguru'] . "' ORDER BY mapel_nama ASC");
-
-    if (!$mapel_query) {
-        error_log("list_mapel_by_guru() ERROR: Mapel query failed: " . mysqli_error($con));
-        return "";
-    }
-
+    if (!$mapel_query) return "";
     $opt = "";
     while ($row2 = mysqli_fetch_array($mapel_query)) {
         $opt .= "<option value=\"" . htmlspecialchars($row2['idmata_pelajaran']) . "\">" . htmlspecialchars($row2['mapel_kode']) . " - " . htmlspecialchars($row2['mapel_nama']) . " - " . htmlspecialchars($row2['kelas_kode']) . "</option>";
@@ -228,20 +179,32 @@ function list_mapel_by_guru()
     return $opt;
 }
 
-function encrypt($str)
+/**
+ * Mengenkripsi string menggunakan OpenSSL (AMAN).
+ * @param string $string Data yang akan dienkripsi.
+ * @return string|null String terenkripsi atau null jika gagal.
+ */
+function encrypt($string)
 {
-    return base64_encode($str);
+    if (!defined('ENCRYPTION_KEY') || !defined('ENCRYPTION_IV')) {
+        error_log('Kunci enkripsi/IV belum didefinisikan!');
+        return null;
+    }
+    $output = openssl_encrypt($string, 'aes-256-cbc', ENCRYPTION_KEY, 0, ENCRYPTION_IV);
+    return strtr(base64_encode($output), '+/=', '-_,');
 }
 
-function decrypt($str)
+/**
+ * Mendekripsi string menggunakan OpenSSL (AMAN).
+ * @param string $string Data yang akan didekripsi.
+ * @return string|null String asli atau null jika gagal.
+ */
+function decrypt($string)
 {
-    return base64_decode($str);
-}
-
-function base_url()
-{
-    $base_url = ((isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] == "on") ? "https" : "http");
-    $base_url .= "://" . $_SERVER['HTTP_HOST'];
-    $base_url .= str_replace(basename($_SERVER['SCRIPT_NAME']), "", $_SERVER['SCRIPT_NAME']);
-    return $base_url;
+    if (!defined('ENCRYPTION_KEY') || !defined('ENCRYPTION_IV')) {
+        error_log('Kunci enkripsi/IV belum didefinisikan!');
+        return null;
+    }
+    $data = base64_decode(strtr($string, '-_,', '+/='));
+    return openssl_decrypt($data, 'aes-256-cbc', ENCRYPTION_KEY, 0, ENCRYPTION_IV);
 }
