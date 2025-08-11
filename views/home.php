@@ -112,43 +112,33 @@ $monthlyIncome = $dataMonthly['monthly_income'] ?: 0; // Set to 0 if null
                 </div>
                 <div class="card-body">
                     <div class="table-responsive">
-                        <table class="table table-bordered" id="dataTable" width="100%" cellspacing="0">
+                        <table class="table table-bordered table-hover" id="dataTable" width="100%" cellspacing="0">
                             <thead>
                                 <tr>
-                                    <th>No.</th>
-                                    <th>Nomor Transaksi</th>
-                                    <th>Nama Pelanggan</th>
-                                    <th>Jenis Jasa</th>
-                                    <th>Jumlah</th>
-                                    <th>Total Harga</th>
-                                    <th>Tanggal</th>
+                                    <th width="20">NO</th>
+                                    <th>NO TRX</th>
+                                    <th>TANGGAL</th>
+                                    <th>NAMA PELANGGAN</th>
+                                    <th>TOTAL HARGA</th>
+                                    <th>KASIR</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <?php
-                                $no = 1;
-                                // Fetch transactions, order by latest date
-                                $queryTransaksi = mysqli_query($con, "SELECT t.*, j.jasa_nama, j.jasa_harga FROM transaksi t JOIN jasa j ON t.jasa_id = j.idjasa ORDER BY t.transaksi_tgl ASC LIMIT 10") or die(mysqli_error($con));
-
-                                if (mysqli_num_rows($queryTransaksi) > 0) {
-                                    while ($data = mysqli_fetch_assoc($queryTransaksi)) {
-                                        $totalHarga = $data['transaksi_jumlah'] * $data['jasa_harga'];
+                                $n = 1;
+                                // Query hanya dari tabel transaksi, di-join dengan pengguna untuk nama kasir
+                                $query = mysqli_query($con, "SELECT t.*, p.pengguna_nama FROM transaksi t LEFT JOIN pengguna p ON t.pengguna_id = p.idpengguna ORDER BY t.idtransaksi DESC") or die(mysqli_error($con));
+                                while ($row = mysqli_fetch_array($query)):
                                 ?>
-                                        <tr>
-                                            <td><?= $no++; ?></td>
-                                            <td><?= $data['transaksi_no']; ?></td>
-                                            <td><?= $data['transaksi_nama']; ?></td>
-                                            <td><?= $data['jasa_nama']; ?></td>
-                                            <td><?= number_format($data['transaksi_jumlah'], 0, '', '.'); ?></td>
-                                            <td><?= 'Rp. ' . number_format($totalHarga, 0, '', '.'); ?></td>
-                                            <td><?= date('d M Y H:i', strtotime($data['transaksi_tgl'])); ?></td>
-                                        </tr>
-                                <?php
-                                    }
-                                } else {
-                                    echo "<tr><td colspan='7' class='text-center'>Tidak ada data transaksi.</td></tr>";
-                                }
-                                ?>
+                                    <tr>
+                                        <td><?= $n++; ?></td>
+                                        <td><?= htmlspecialchars($row['transaksi_no']); ?></td>
+                                        <td><?= date('d-m-Y', strtotime($row['transaksi_tgl'])); ?></td>
+                                        <td><?= htmlspecialchars($row['transaksi_nama']); ?></td>
+                                        <td><?= 'Rp. ' . number_format($row['transaksi_total_harga'], 0, ',', '.'); ?></td>
+                                        <td><?= htmlspecialchars($row['pengguna_nama']); ?></td>
+                                    </tr>
+                                <?php endwhile; ?>
                             </tbody>
                         </table>
                     </div>
@@ -177,7 +167,7 @@ $monthlyIncome = $dataMonthly['monthly_income'] ?: 0; // Set to 0 if null
                                 <label for="transaksi_no">Nomor Transaksi <span class="text-danger">*</span></label>
                                 <input type="hidden" name="idtransaksi">
                                 <input type="text" class="form-control" id="transaksi_no" name="transaksi_no"
-                                    value="<?= noTransaksi(); ?>" required>
+                                    value="<?= noTransaksi($con); ?>" required>
                             </div>
                         </div>
                         <div class="col-md-8">
@@ -192,7 +182,7 @@ $monthlyIncome = $dataMonthly['monthly_income'] ?: 0; // Set to 0 if null
                                 <select name="jenis_jasa" id="jenis_jasa" class="form-control select2"
                                     style="width:100%;" required>
                                     <option value="">-- Pilih Jenis Jasa --</option>
-                                    <?= list_jasa(); ?>
+                                    <?= list_jasa($con); ?>
                                 </select>
                             </div>
                         </div>
