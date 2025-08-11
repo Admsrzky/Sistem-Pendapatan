@@ -25,14 +25,15 @@ CREATE TABLE IF NOT EXISTS `jasa` (
   `jasa_nama` varchar(128) DEFAULT NULL,
   `jasa_harga` int DEFAULT NULL,
   PRIMARY KEY (`idjasa`)
-) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb3;
+) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=utf8mb3;
 
--- Dumping data for table rekam_jasa.jasa: ~4 rows (approximately)
+-- Dumping data for table rekam_jasa.jasa: ~5 rows (approximately)
 INSERT INTO `jasa` (`idjasa`, `jasa_nama`, `jasa_harga`) VALUES
-	(5, 'Jilid Semi Lux', 40000),
-	(6, 'Jilid Lux/Hard Cover', 50000),
-	(7, 'Jilid Spiral Biasa (Ring Plastik)', 15000),
-	(9, 'Fotocopy 15 lembar', 10000);
+	(10, 'Jasa Jilid Softcover', 4000),
+	(11, 'Fotocopy ', 1000),
+	(12, 'Print Berwarna', 2000),
+	(13, 'Print Tidak Berwarna', 1000),
+	(14, 'Jilid Hardcover', 40000);
 
 -- Dumping structure for table rekam_jasa.pengguna
 CREATE TABLE IF NOT EXISTS `pengguna` (
@@ -44,7 +45,7 @@ CREATE TABLE IF NOT EXISTS `pengguna` (
   PRIMARY KEY (`idpengguna`)
 ) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb3;
 
--- Dumping data for table rekam_jasa.pengguna: ~2 rows (approximately)
+-- Dumping data for table rekam_jasa.pengguna: ~1 rows (approximately)
 INSERT INTO `pengguna` (`idpengguna`, `pengguna_nama`, `pengguna_username`, `pengguna_password`, `pengguna_level`) VALUES
 	(1, 'Administrator', 'admin', '$2y$10$9kgZVoKm/uCj9faKX5H2q.tgawINM9ARl8D8r1TNe1MoG7HH6aDc2', 'Admin'),
 	(6, 'Fajar Aristama', 'fajar', '$2y$10$mXvKI8KWXaWEjUScGnLdO.RVlCmcaUxsidtntyytT4QwxoKcAltMK', 'User');
@@ -52,23 +53,39 @@ INSERT INTO `pengguna` (`idpengguna`, `pengguna_nama`, `pengguna_username`, `pen
 -- Dumping structure for table rekam_jasa.transaksi
 CREATE TABLE IF NOT EXISTS `transaksi` (
   `idtransaksi` int NOT NULL AUTO_INCREMENT,
-  `jasa_id` int NOT NULL,
   `transaksi_no` varchar(20) DEFAULT NULL,
   `transaksi_tgl` date DEFAULT NULL,
   `transaksi_nama` varchar(128) DEFAULT NULL,
-  `transaksi_jumlah` varchar(5) DEFAULT NULL,
-  `transaksi_total_harga` varchar(15) DEFAULT NULL,
+  `transaksi_total_harga` decimal(15,2) DEFAULT NULL,
   `pengguna_id` int NOT NULL,
-  PRIMARY KEY (`idtransaksi`,`jasa_id`,`pengguna_id`),
-  KEY `fk_transaksi_jasa_idx` (`jasa_id`),
+  PRIMARY KEY (`idtransaksi`,`pengguna_id`),
   KEY `fk_transaksi_pengguna1_idx` (`pengguna_id`),
-  CONSTRAINT `fk_transaksi_jasa` FOREIGN KEY (`jasa_id`) REFERENCES `jasa` (`idjasa`),
   CONSTRAINT `fk_transaksi_pengguna1` FOREIGN KEY (`pengguna_id`) REFERENCES `pengguna` (`idpengguna`)
-) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8mb3;
+) ENGINE=InnoDB AUTO_INCREMENT=11 DEFAULT CHARSET=utf8mb3;
 
 -- Dumping data for table rekam_jasa.transaksi: ~1 rows (approximately)
-INSERT INTO `transaksi` (`idtransaksi`, `jasa_id`, `transaksi_no`, `transaksi_tgl`, `transaksi_nama`, `transaksi_jumlah`, `transaksi_total_harga`, `pengguna_id`) VALUES
-	(5, 5, 'TRX00001', '2025-08-02', 'Fajar Aristama', '2', '80000', 1);
+INSERT INTO `transaksi` (`idtransaksi`, `transaksi_no`, `transaksi_tgl`, `transaksi_nama`, `transaksi_total_harga`, `pengguna_id`) VALUES
+	(10, 'TRX00001', '2025-08-08', 'Fajar Aristamaa', 41000.00, 1);
+
+-- Dumping structure for table rekam_jasa.transaksi_items
+CREATE TABLE IF NOT EXISTS `transaksi_items` (
+  `id_transaksi_item` int NOT NULL AUTO_INCREMENT,
+  `transaksi_id` int NOT NULL,
+  `jasa_id` int NOT NULL,
+  `jumlah` int NOT NULL,
+  `harga` decimal(15,2) NOT NULL,
+  `subtotal` decimal(15,2) NOT NULL,
+  PRIMARY KEY (`id_transaksi_item`),
+  KEY `fk_transaksi_items_to_transaksi` (`transaksi_id`),
+  KEY `fk_transaksi_items_to_jasa` (`jasa_id`),
+  CONSTRAINT `fk_transaksi_items_to_jasa` FOREIGN KEY (`jasa_id`) REFERENCES `jasa` (`idjasa`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `fk_transaksi_items_to_transaksi` FOREIGN KEY (`transaksi_id`) REFERENCES `transaksi` (`idtransaksi`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Dumping data for table rekam_jasa.transaksi_items: ~2 rows (approximately)
+INSERT INTO `transaksi_items` (`id_transaksi_item`, `transaksi_id`, `jasa_id`, `jumlah`, `harga`, `subtotal`) VALUES
+	(3, 10, 11, 1, 1000.00, 1000.00),
+	(4, 10, 14, 1, 40000.00, 40000.00);
 
 /*!40103 SET TIME_ZONE=IFNULL(@OLD_TIME_ZONE, 'system') */;
 /*!40101 SET SQL_MODE=IFNULL(@OLD_SQL_MODE, '') */;
